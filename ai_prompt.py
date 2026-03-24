@@ -52,6 +52,56 @@ def _save_config(base_url=None, token=None, model=None):
 
 _CONFIG = _load_config()
 
+def _clean_thinking_response(text: str) -> str:
+    """清理响应中的思考过程，只保留最终结果"""
+    # 定义需要清理的思考模式
+    thinking_patterns = [
+        r'^Thinking Process:.*?\n\n',
+        r'^思考过程：.*?\n\n',
+        r'^让我想想.*?\n',
+        r'^首先.*?\n',
+        r'^然后.*?\n',
+        r'^接下来.*?\n',
+        r'^综上所述.*?\n',
+        r'^我认为.*?\n',
+        r'^分析：.*?\n',
+        r'^思考：.*?\n',
+        r'^【思考】.*?\n',
+    ]
+    
+    # 逐行清理
+    lines = text.split('\n')
+    cleaned_lines = []
+    skip_next = False
+    
+    for line in lines:
+        should_skip = False
+        for pattern in thinking_patterns:
+            if re.match(pattern, line, re.IGNORECASE):
+                should_skip = True
+                break
+        
+        if re.match(r'^Thinking Process:', line, re.IGNORECASE):
+            skip_next = True
+            continue
+        
+        if skip_next:
+            if line.strip() == '':
+                skip_next = False
+            continue
+        
+        if not should_skip:
+            cleaned_lines.append(line)
+    
+    result = '\n'.join(cleaned_lines).strip()
+    
+    if re.search(r'Thinking Process|思考过程|让我想想|首先|然后', result, re.IGNORECASE):
+        paragraphs = result.split('\n\n')
+        if len(paragraphs) > 1:
+            result = paragraphs[-1].strip()
+    
+    return result
+
 def _ai_chat(url: str, token: str, model: str, msg: str, timeout: int = 60, image_base64: str = None) -> str:
     """通用的AI聊天接口，支持OpenAI兼容的API，支持多模态"""
     base = url.rstrip('/')
@@ -79,18 +129,34 @@ def _ai_chat(url: str, token: str, model: str, msg: str, timeout: int = 60, imag
             if "choices" in data and len(data["choices"]) > 0:
                 choice = data["choices"][0]
                 if "message" in choice and "content" in choice["message"]:
-                    return choice["message"]["content"].strip()
+                    res = choice["message"]["content"].strip()
+                    res = _clean_thinking_response(res)
+                    return res
                 elif "text" in choice:
-                    return choice["text"].strip()
+                    res = choice["text"].strip()
+                    res = _clean_thinking_response(res)
+                    return res
                 elif "content" in choice:
-                    return choice["content"].strip()
+                    res = choice["content"].strip()
+                    res = _clean_thinking_response(res)
+                    return res
             
-            if "output" in data and len(data["output"]) > 0:
-                if "content" in data["output"][0]:
-                    return data["output"][0]["content"].strip()
+            if "output" in data and isinstance(data["output"], list):
+                for item in data["output"]:
+                    if item.get("type") == "message" and "content" in item:
+                        res = item["content"].strip()
+                        res = _clean_thinking_response(res)
+                        return res
+                for item in data["output"]:
+                    if "content" in item:
+                        res = item["content"].strip()
+                        res = _clean_thinking_response(res)
+                        return res
             
             if "response" in data:
-                return data["response"].strip()
+                res = data["response"].strip()
+                res = _clean_thinking_response(res)
+                return res
             
             return str(data)
         except Exception as e:
@@ -122,14 +188,20 @@ def _ai_chat(url: str, token: str, model: str, msg: str, timeout: int = 60, imag
                     res = str(choice).strip()
             elif "response" in data:
                 res = data["response"].strip()
-            elif "output" in data and len(data["output"]) > 0:
-                if "content" in data["output"][0]:
-                    res = data["output"][0]["content"].strip()
+            elif "output" in data and isinstance(data["output"], list):
+                for item in data["output"]:
+                    if item.get("type") == "message" and "content" in item:
+                        res = item["content"].strip()
+                        break
                 else:
-                    res = str(data["output"][0]).strip()
+                    if "content" in data["output"][0]:
+                        res = data["output"][0]["content"].strip()
+                    else:
+                        res = str(data["output"][0]).strip()
             else:
                 res = str(data).strip()
             
+            res = _clean_thinking_response(res)
             _save_config(model=model)
             return res
         except:
@@ -140,6 +212,15 @@ def _ai_chat(url: str, token: str, model: str, msg: str, timeout: int = 60, imag
 def _format_image_prompt(manual_text: str, optional_text: str, mode: str, detail_level: str, prompt_type: str, output_lang: str) -> str:
     """格式化图片提示词"""
     header = "【绝对指令】直接输出最终结果，严禁任何思考过程、分析或解释。"
+    
+    thinking_ban = """
+【严重警告】
+- 绝对不允许输出"Thinking Process:"、"思考过程："、"让我想想"等任何思考性文字
+- 绝对不允许输出"首先"、"然后"、"接下来"、"综上所述"等步骤性词语
+- 绝对不允许输出任何分析、解释或说明
+- 你的回答必须是纯提示词，不能包含任何其他内容
+- 如果你输出了思考过程，你的回答将被视为无效
+"""
     
     if optional_text:
         input_section = f"""【图片识别内容】（来自提示词反推节点）
@@ -217,6 +298,7 @@ def _format_image_prompt(manual_text: str, optional_text: str, mode: str, detail
         output_format = "输出英文提示词"
     
     return f"""{header}
+{thinking_ban}
 
 你是一个专业的Stable Diffusion提示词转换专家。
 请将以下用户输入转换为高质量的{prompt_type}提示词，用于AI绘画。
@@ -232,11 +314,12 @@ def _format_image_prompt(manual_text: str, optional_text: str, mode: str, detail
 【最重要规则 - 必须绝对遵守】
 1. 严禁任何形式的思考过程、分析、解释或额外说明
 2. 禁止使用"让我想想"、"首先"、"然后"、"综上所述"、"接下来"、"我认为"等任何思考性词语
-3. 禁止输出任何标签，如"思考过程："、"分析："、"转换后的提示词："、"结果："等
-4. 禁止输出任何解释性文字
-5. 直接输出最终的提示词，不要有任何前缀或后缀
-6. 不要添加用户输入中没有描述的元素
-7. {lang_instruction}
+3. 禁止输出"Thinking Process:"、"思考过程："等任何思考标签
+4. 禁止输出任何标签，如"思考过程："、"分析："、"转换后的提示词："、"结果："等
+5. 禁止输出任何解释性文字
+6. 直接输出最终的提示词，不要有任何前缀或后缀
+7. 不要添加用户输入中没有描述的元素
+8. {lang_instruction}
 
 【输出格式】
 直接输出{output_format}，只输出提示词本身，不包含任何其他内容。
@@ -248,6 +331,15 @@ def _format_image_prompt(manual_text: str, optional_text: str, mode: str, detail
 def _format_video_prompt(manual_text: str, optional_text: str, mode: str, detail_level: str, output_lang: str) -> str:
     """格式化视频提示词"""
     header = "【绝对指令】直接输出最终结果，严禁任何思考过程、分析或解释。"
+    
+    thinking_ban = """
+【严重警告】
+- 绝对不允许输出"Thinking Process:"、"思考过程："、"让我想想"等任何思考性文字
+- 绝对不允许输出"首先"、"然后"、"接下来"、"综上所述"等步骤性词语
+- 绝对不允许输出任何分析、解释或说明
+- 你的回答必须是纯提示词，不能包含任何其他内容
+- 如果你输出了思考过程，你的回答将被视为无效
+"""
     
     if optional_text:
         input_section = f"""【图片识别内容】（来自提示词反推节点）
@@ -310,6 +402,7 @@ def _format_video_prompt(manual_text: str, optional_text: str, mode: str, detail
         lang_instruction = "必须使用英文输出"
     
     return f"""{header}
+{thinking_ban}
 
 你是一个专业的WAN2.2视频生成提示词优化专家。你的任务是根据用户输入的简要描述，生成高质量的视频提示词。
 
@@ -321,11 +414,12 @@ def _format_video_prompt(manual_text: str, optional_text: str, mode: str, detail
 【最重要规则 - 必须绝对遵守】
 1. 严禁任何形式的思考过程、分析、解释或额外说明
 2. 禁止使用"让我想想"、"首先"、"然后"、"综上所述"、"接下来"、"我认为"等任何思考性词语
-3. 禁止输出任何标签，如"优化后："、"润色后："、"视频提示词："、"结果："等
-4. 禁止输出任何解释性文字
-5. 直接输出最终的视频提示词，不要有任何前缀或后缀
-6. 输出内容为纯文本，不要使用markdown格式
-7. {lang_instruction}
+3. 禁止输出"Thinking Process:"、"思考过程："等任何思考标签
+4. 禁止输出任何标签，如"优化后："、"润色后："、"视频提示词："、"结果："等
+5. 禁止输出任何解释性文字
+6. 直接输出最终的视频提示词，不要有任何前缀或后缀
+7. 输出内容为纯文本，不要使用markdown格式
+8. {lang_instruction}
 
 【输出格式】
 直接输出视频提示词本身，只输出提示词，不包含任何其他内容。
@@ -337,6 +431,15 @@ def _format_video_prompt(manual_text: str, optional_text: str, mode: str, detail
 def _format_prompt_interrogation(image_base64: str, detail_level: str, output_lang: str) -> str:
     """格式化提示词反推提示词"""
     header = "【绝对指令】直接输出最终结果，严禁任何思考过程、分析或解释。"
+    
+    thinking_ban = """
+【严重警告】
+- 绝对不允许输出"Thinking Process:"、"思考过程："、"让我想想"等任何思考性文字
+- 绝对不允许输出"首先"、"然后"、"接下来"、"综上所述"等步骤性词语
+- 绝对不允许输出任何分析、解释或说明
+- 你的回答必须是纯提示词，不能包含任何其他内容
+- 如果你输出了思考过程，你的回答将被视为无效
+"""
     
     if detail_level == "标准":
         strategy = """【反推策略：简洁描述】
@@ -363,6 +466,7 @@ def _format_prompt_interrogation(image_base64: str, detail_level: str, output_la
         output_format = "输出英文提示词"
     
     return f"""{header}
+{thinking_ban}
 
 你是一个专业的AI绘画提示词反推专家。请仔细观察图片，识别图片中的内容，并生成高质量的提示词。
 
@@ -372,11 +476,12 @@ def _format_prompt_interrogation(image_base64: str, detail_level: str, output_la
 【最重要规则 - 必须绝对遵守】
 1. 严禁任何形式的思考过程、分析、解释或额外说明
 2. 禁止使用"让我想想"、"首先"、"然后"、"综上所述"、"接下来"、"我认为"等任何思考性词语
-3. 禁止输出任何标签，如"反推结果："、"识别结果："、"提示词："、"结果："等
-4. 禁止输出任何解释性文字
-5. 直接输出反推的提示词，不要有任何前缀或后缀
-6. 不要添加图片中没有的内容
-7. {lang_instruction}
+3. 禁止输出"Thinking Process:"、"思考过程："等任何思考标签
+4. 禁止输出任何标签，如"反推结果："、"识别结果："、"提示词："、"结果："等
+5. 禁止输出任何解释性文字
+6. 直接输出反推的提示词，不要有任何前缀或后缀
+7. 不要添加图片中没有的内容
+8. {lang_instruction}
 
 【输出格式】
 直接输出{output_format}，只输出提示词本身，不包含任何其他内容。
@@ -468,7 +573,7 @@ class AIPromptInterrogator:
             res = _ai_chat(addr, token, model, req, _CONFIG["timeout"], img_base64)
             res = res.strip().strip('"\'')
             
-            res = re.sub(r'^(反推的提示词:|思考[：:]|分析[：:]|让我想想|首先|然后|最后|综上所述)[\s:]*', '', res, flags=re.I)
+            res = re.sub(r'^(反推的提示词:|思考[：:]|分析[：:]|让我想想|首先|然后|最后|综上所述|Thinking Process:)[\s:]*', '', res, flags=re.I)
             
             if '\n' in res:
                 lines = [line.strip() for line in res.split('\n') if line.strip()]
@@ -535,7 +640,7 @@ class AIImagePromptConverter:
             res = _ai_chat(addr, token, model, req, _CONFIG["timeout"])
             res = res.strip().strip('"\'')
             
-            res = re.sub(r'^(转换后的提示词:|Converted prompt:|思考[：:]|分析[：:]|让我想想|首先|然后|最后|综上所述)[\s:]*', '', res, flags=re.I)
+            res = re.sub(r'^(转换后的提示词:|Converted prompt:|思考[：:]|分析[：:]|让我想想|首先|然后|最后|综上所述|Thinking Process:)[\s:]*', '', res, flags=re.I)
             
             if '\n' in res:
                 lines = [line.strip() for line in res.split('\n') if line.strip()]
@@ -602,7 +707,7 @@ class AIVideoPromptConverter:
             res = _ai_chat(addr, token, model, video_req, _CONFIG["timeout"])
             res = res.strip().strip('"\'')
             
-            res = re.sub(r'^(处理后的[^:]*:|优化后[^:]*:|视频提示词[^:]*:|思考[：:]|分析[：:]|让我想想|首先|然后|最后|综上所述)[\s:]*', '', res, flags=re.I)
+            res = re.sub(r'^(处理后的[^:]*:|优化后[^:]*:|视频提示词[^:]*:|思考[：:]|分析[：:]|让我想想|首先|然后|最后|综上所述|Thinking Process:)[\s:]*', '', res, flags=re.I)
             
             if '\n' in res:
                 lines = [line.strip() for line in res.split('\n') if line.strip() and not line.startswith(('```', '`'))]
