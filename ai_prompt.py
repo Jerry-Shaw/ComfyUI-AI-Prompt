@@ -540,17 +540,7 @@ class AIContentInterrogator:
     CATEGORY = "AI"
 
     def interrogate(self, **kwargs):
-        image_tensor = kwargs.get("图片", None)
-        
-        if image_tensor is None:
-            return ("", "")
-        
-        try:
-            if len(image_tensor) == 0:
-                return ("", "")
-        except:
-            return ("", "")
-        
+        image_tensor = kwargs["图片"]
         config_json = kwargs["AI配置"]
         detail_level = kwargs["详细程度"]
         output_lang = kwargs["输出语言"]
