@@ -210,7 +210,7 @@ def _ai_chat(url: str, token: str, model: str, msg: str, timeout: int = 60, imag
 
 
 def _format_image_prompt(manual_text: str, optional_text: str, mode: str, detail_level: str, output_lang: str) -> str:
-    """格式化图片提示词 - 同时输出正向和负向提示词"""
+    """格式化图片提示词 - 保留具体内容并主动扩展细节"""
     has_manual = manual_text and manual_text.strip()
     has_optional = optional_text and optional_text.strip()
     
@@ -219,111 +219,109 @@ def _format_image_prompt(manual_text: str, optional_text: str, mode: str, detail
     else:
         lang_inst = "use English output"
     
+    # 根据详细程度确定最少词数要求
+    if detail_level == "标准":
+        min_positive_words = 60
+        min_negative_words = 20
+    elif detail_level == "详细":
+        min_positive_words = 120
+        min_negative_words = 30
+    else:  # 极详细
+        min_positive_words = 200
+        min_negative_words = 40
+    
     lines = []
     lines.append("【指令】直接输出正向和负向提示词，不要有任何思考过程、分析或解释。")
-    lines.append("严禁使用任何Markdown格式（不要使用**粗体**、*斜体*、`代码块`等）")
+    lines.append("严禁使用任何Markdown格式。")
     lines.append("")
     lines.append(f"你是一个专业的AI绘画提示词专家。{lang_inst}。")
     lines.append("")
     
-    # 提示词公式模板
+    # 提示词公式参考
     if mode == "文生图":
-        lines.append("【提示词公式】主体 + 场景 + 风格 + 光线 + 构图 + 质量")
-        lines.append("- 主体：核心对象，详细描述外观、姿态、表情")
-        lines.append("- 场景：环境背景，地点、氛围、细节")
-        lines.append("- 风格：艺术风格，写实/动漫/油画/赛博朋克等")
-        lines.append("- 光线：光照类型，自然光/柔光/逆光/电影光等")
-        lines.append("- 构图：镜头语言，景别/角度/视角")
-        lines.append("- 质量：画质参数，8K/高细节/锐利焦点等")
+        lines.append("【提示词公式参考】主体 + 场景 + 风格 + 光线 + 构图 + 质量")
     else:
-        lines.append("【提示词公式】图生图：保留原图核心 + 描述修改方向")
-        lines.append("- 原图基础：保留主体和场景的核心特征")
-        lines.append("- 修改方向：明确要改变的属性（颜色/动作/风格等）")
-        lines.append("- 融合要求：新旧元素自然融合，保持风格一致")
+        lines.append("【提示词公式参考】图生图：保留原图核心 + 描述修改方向")
     lines.append("")
     
-    # 知识库 - 根据语言选择版本
+    # 核心创作规则
+    lines.append("【核心创作规则 - 必须严格遵守】")
+    lines.append("1. **禁止只输出通用画质词**（如“杰作,最佳质量,8K,高细节”等）。通用词最多占正向提示词的20%。")
+    lines.append("2. **至少80%的正向提示词必须来自用户输入的具体内容**，并且要**主动扩展细节**：")
+    lines.append("   - 提取用户描述中的核心名词、形容词、动作。")
+    lines.append("   - 为每个核心元素添加合理的细节（例如：“草帽” → “破旧的草帽, 帽檐磨损, 麻绳绑带”）。")
+    lines.append("   - 扩展场景：根据已有环境添加协调的额外元素（例如：有“沙滩”可扩展“贝壳, 海浪泡沫, 湿沙反光”）。")
+    lines.append("3. **不要生硬套用分类**：直接输出关键词序列即可。")
+    lines.append("4. **顺序要求**：先列出具体内容词（核心元素及其细节），最后再添加少量通用质量/风格/光线词。")
+    lines.append("")
+    
+    # 示例对比（略）
     if output_lang == "中文":
-        lines.append("【关键词知识库】")
-        lines.append("质量: 杰作, 最佳质量, 高质量, 高细节, 极致细节, 8K, 4K")
-        lines.append("风格: 照片级写实, 电影感, 数字艺术, 油画, 水彩, 动漫风格, 赛博朋克")
-        lines.append("光线: 电影级照明, 柔光, 自然光, 黄金时刻, 工作室灯光, 轮廓光")
-        lines.append("构图: 特写, 广角, 低角度, 高角度, 景深, 焦外虚化, 中心构图")
+        lines.append("【正确与错误示例】")
+        lines.append("用户输入：'一个戴着草帽的老渔夫坐在生锈的船上，手里拿着渔网，背景是黄昏的海港'")
+        lines.append("✅ 正确输出（扩展充分）：草帽, 破旧草帽, 帽檐磨损, 老渔夫, 满脸皱纹, 深褐色皮肤, 白色胡茬, 粗糙双手, 指甲裂缝, 生锈的船, 剥落绿漆, 铆钉, 渔网, 麻绳, 木质甲板, 黄昏, 橙紫色天空, 长影子, 金色边缘光, 海港, 停泊船只, 码头木桩, 波光粼粼, 海鸥, 写实风格, 电影感, 柔光, 中景, 8K")
+        lines.append("❌ 错误输出（只输出通用词）：杰作, 最佳质量, 8K, 高细节, 电影感, 柔光, 中景, 写实")
     else:
-        lines.append("【关键词知识库】")
-        lines.append("quality: masterpiece, best quality, high quality, highly detailed, ultra-detailed, 8K, 4K")
-        lines.append("style: photorealistic, cinematic, digital art, oil painting, watercolor, anime style, cyberpunk")
-        lines.append("lighting: cinematic lighting, soft lighting, natural lighting, golden hour, studio lighting, rim lighting")
-        lines.append("composition: close-up, wide shot, low angle, high angle, depth of field, bokeh, centered composition")
+        lines.append("【Good vs Bad Examples】")
+        lines.append("User input: 'an old fisherman in a straw hat sitting on a rusty boat, holding a fishing net, background is a dusk harbor'")
+        lines.append("✅ Good: straw hat, worn straw hat, frayed brim, hemp strap, old fisherman, wrinkled face, dark brown skin, white stubble, rough hands, cracked nails, rusty boat, peeling green paint, rivets, fishing net, hemp rope, wooden deck, dusk, orange-purple sky, long shadows, golden rim light, harbor, moored boats, dock pilings, sparkling water, seagulls, realistic style, cinematic, soft lighting, medium shot, 8K")
+        lines.append("❌ Bad: masterpiece, best quality, 8K, high detail, cinematic, soft lighting, medium shot, realistic")
     lines.append("")
     
-    # 详细程度
-    if detail_level == "标准":
-        lines.append("【详细程度】简洁明了，每个类别1-2个关键词，总词数30以内。")
-    elif detail_level == "详细":
-        lines.append("【详细程度】适当丰富，每个类别2-4个关键词，总词数30-60。")
-    else:
-        lines.append("【详细程度】极致详细，每个类别4-6个关键词，总词数60-100。")
+    # 详细程度描述（与最少词数一致）
+    lines.append(f"【详细程度】{detail_level}。正向提示词最少 {min_positive_words} 个词，负向提示词最少 {min_negative_words} 个词。")
+    lines.append("关键词用英文逗号分隔，不要换行。")
     lines.append("")
     
-    # 输出格式
-    lines.append("【输出格式 - 必须严格遵守】")
-
+    # 输出格式（动态显示数量要求）
+    lines.append("【输出格式】")
     if output_lang == "中文":
-        lines.append("[POSITIVE]正向提示词（多个关键词用英文逗号分隔，必须使用中文）")
-        lines.append("[NEGATIVE]负向提示词（多个关键词用英文逗号分隔，必须使用中文）")
+        lines.append(f"[POSITIVE]正向提示词（必须使用中文，逗号分隔，至少 {min_positive_words} 个词）")
+        lines.append(f"[NEGATIVE]负向提示词（必须使用中文，逗号分隔，至少 {min_negative_words} 个词）")
     else:
-        lines.append("[POSITIVE]positive prompt (comma separated, must use English)")
-        lines.append("[NEGATIVE]negative prompt (comma separated, must use English)")
-
-    lines.append("")
-    lines.append("【格式示例】")
-    if output_lang == "中文":
-        lines.append("[POSITIVE]杰作, 最佳质量, 一个女孩, 红色连衣裙, 沙滩, 日落, 逆光, 柔光, 中景, 8K")
-        lines.append("[NEGATIVE]模糊, 低质量, 畸形的手, 多余的手指, 水印, 文字")
-    else:
-        lines.append("[POSITIVE]masterpiece, best quality, a girl, red dress, beach, sunset, backlighting, soft lighting, medium shot, 8K")
-        lines.append("[NEGATIVE]blurry, low quality, bad anatomy, extra fingers, watermark, text")
+        lines.append(f"[POSITIVE]positive prompt (English, comma separated, at least {min_positive_words} words)")
+        lines.append(f"[NEGATIVE]negative prompt (English, comma separated, at least {min_negative_words} words)")
     lines.append("")
     
-    # 用户输入
+    # 用户输入部分（保持不变）
     if has_optional and has_manual:
         lines.append("【任务】综合以下内容，创作高质量的正向和负向提示词。")
         lines.append("")
-        lines.append("【原图描述】（参考内容，了解画面基础）：")
+        lines.append("【原图描述】（核心内容基础，必须保留并扩展）：")
         lines.append(optional_text.strip())
         lines.append("")
-        lines.append("【手工提示词】（创作方向，请全面理解）：")
+        lines.append("【手工提示词】（扩展/修改方向，必须融入并扩展）：")
         lines.append(manual_text.strip())
         lines.append("")
-        lines.append("【创作要求】")
-        lines.append("- 如果两者都有，需融合两者元素，手工提示词优先级更高")
-        lines.append("- 按提示词公式组织正向提示词结构")
-        lines.append("- 负向提示词要基于对原图内容和手工提示词的理解，排除画面中不应出现的元素")
-        lines.append("- 负向提示词包括：画质问题、结构问题、与原图/手工提示词冲突的元素、不想要的内容")
+        lines.append("【详细要求】")
+        lines.append("1. 从上述两个描述中提取所有具体的视觉元素（人物、物体、场景、颜色、动作、材质等）。")
+        lines.append("2. 为每个元素添加合理的细节扩展（参考上面的示例方式）。")
+        lines.append("3. 根据场景添加协调的额外环境元素（例如：如果有“森林”，可以添加“松树、蕨类、青苔、光束”）。")
+        lines.append("4. 如果手工提示词与原图描述有冲突，则按手工提示词调整，但仍尽量保留原图其他可用元素。")
+        lines.append("5. 最后补充少量（不超过20%）通用画质/风格/光线/构图词。")
+        lines.append("6. 负向提示词：根据扩展后的最终画面，排除常见的画质问题、结构问题和不需要的元素。")
+        lines.append(f"7. **必须进行充分的细节扩展和场景扩展，确保正向提示词达到 {min_positive_words} 个词以上。**")
     elif has_optional and not has_manual:
         lines.append("【任务】基于以下原图描述，创作高质量的正向和负向提示词。")
         lines.append("")
         lines.append("【原图描述】：")
         lines.append(optional_text.strip())
         lines.append("")
-        lines.append("【创作要求】")
-        lines.append("- 保留原图核心内容")
-        lines.append("- 补充画质、光线、构图关键词到正向提示词")
-        lines.append("- 负向提示词要基于原图内容，排除可能出现的画质问题和结构问题")
+        lines.append("【详细要求】")
+        lines.append("- 提取所有核心元素并添加细节扩展。")
+        lines.append("- 添加合理的场景扩展元素，使画面更丰富。")
+        lines.append("- 最后补充少量通用画质/风格/光线/构图词。")
+        lines.append(f"- **必须确保正向提示词达到 {min_positive_words} 个词以上。**")
     elif not has_optional and has_manual:
         lines.append("【任务】根据以下手工提示词，创作高质量的正向和负向提示词。")
         lines.append("")
         lines.append("【手工提示词】：")
         lines.append(manual_text.strip())
         lines.append("")
-        lines.append("【创作要求】")
-        lines.append("- 按提示词公式完整构建正向提示词")
-        lines.append("- 包含画质、风格、光线、构图关键词")
-        lines.append("- 负向提示词要基于手工提示词的内容，排除不想要或冲突的元素")
-    
-    if not lines:
-        return None
+        lines.append("【详细要求】")
+        lines.append("- 提取所有核心元素并添加细节扩展。")
+        lines.append("- 添加合理的场景和氛围元素。")
+        lines.append(f"- **必须确保正向提示词达到 {min_positive_words} 个词以上。**")
     
     lines.append("")
     lines.append(f"直接输出（{lang_inst}）：")
@@ -452,40 +450,76 @@ Effects: slow motion, motion blur, lens flare, tilt-shift, time-lapse"""
 
 
 def _format_content_interrogation(image_base64: str, detail_level: str, output_lang: str) -> str:
-    """格式化内容反推提示词 - 输出内容描述和负向提示词"""
+    """格式化内容反推提示词 - 输出内容描述和负向提示词（深层次描述）"""
     if output_lang == "中文":
         lang_inst = "使用中文输出"
         if detail_level == "标准":
-            strategy = "简洁描述图片中的主要元素和场景"
+            strategy = """详细描述图片中的主体（外观、姿态、服饰）、主要场景（环境元素）、整体光线方向、主色调和大致氛围。
+要求：输出至少10个正向关键词，自然语言描述不少于120字。"""
         elif detail_level == "详细":
-            strategy = "详细描述图片中的元素、光线、色彩、风格和氛围"
-        else:
-            strategy = "极致详细地描述图片中的所有视觉元素，包括光影、质感、构图、色彩层次和情绪氛围"
+            strategy = """非常详细地描述图片的每一个视觉层面：
+- 主体：具体特征（年龄、性别、表情、发型、动作、穿戴）
+- 场景：精确环境（背景细节、前景元素、远近层次、空间关系）
+- 光线：光源位置、强度、色温、阴影软硬、高光形态
+- 色彩：主色、辅色、冷暖倾向、饱和度、对比度
+- 质感：材质表现（皮肤、布料、金属、玻璃、水面等）
+- 构图：镜头焦段、景别、视角、引导线、留白
+- 情绪：整体氛围、情感倾向
+要求：输出至少15个正向关键词，自然语言描述不少于250字。"""
+        else:  # 极详细
+            strategy = """极致深入地解剖图片的每一个视觉原子：
+- 主体微观细节：瞳孔光斑、发丝走向、皮肤纹理、衣物褶皱与纤维、饰品反光
+- 场景解剖：背景中每一类物体的名称、数量、相对位置、遮挡关系、远近虚实
+- 光线深度：具体光源类型（日光灯/烛光/阴天天空/夕阳斜射）、光线衰减、二次反射、光晕、暗部补光
+- 颜色层级：阴影色、中间调色、高光色，颜色间的过渡和冲突
+- 材质科学：粗糙度、反射率、透射、次表面散射特征
+- 构图数学：黄金分割点、对角线、框架内框架、视线流线
+- 镜头光学：焦段具体数值（如24mm广角畸变、85mm人像压缩）、光圈导致的虚化量、光圈形状（星芒/圆形）
+- 情绪微相：主体细微表情的肌肉运动、环境对情绪的烘托
+要求：输出至少20个正向关键词，自然语言描述不少于500字。"""
     else:
         lang_inst = "use English output"
-        if detail_level == "标准":
-            strategy = "briefly describe the main elements and scene in the image"
-        elif detail_level == "详细":
-            strategy = "describe in detail the elements, lighting, color, style and atmosphere in the image"
-        else:
-            strategy = "describe all visual elements in extreme detail, including lighting, texture, composition, color gradation and emotional atmosphere"
+        if detail_level == "standard":
+            strategy = """Describe in detail the subject (appearance, pose, clothing), main scene (environmental elements), overall lighting direction, dominant colors, and general mood.
+Requirements: Output at least 10 positive keywords, and natural language description of at least 120 words."""
+        elif detail_level == "detailed":
+            strategy = """Describe every visual layer in great detail:
+- Subject: specific features (age, gender, expression, hair, action, clothing)
+- Scene: precise environment (background details, foreground elements, depth layering, spatial relations)
+- Lighting: light source position, intensity, color temperature, shadow softness, highlight shape
+- Color: main color, secondary color, cool/warm bias, saturation, contrast
+- Texture: material representation (skin, fabric, metal, glass, water, etc.)
+- Composition: lens focal length, shot size, angle, leading lines, negative space
+- Mood: overall atmosphere, emotional tendency
+Requirements: Output at least 15 positive keywords, and natural language description of at least 250 words."""
+        else:  # extreme
+            strategy = """Dissect every visual atom of the image at an extreme depth:
+- Subject micro-details: pupil specular, hair strand direction, skin pores, cloth wrinkles/fibers, jewelry reflections
+- Scene anatomy: exact objects in background, their count, relative positions, occlusions, depth-of-field effects
+- Lighting deep analysis: specific light source type (fluorescent/candlelight/overcast sky/golden hour), light falloff, secondary bounces, glow, fill light
+- Color hierarchy: shadow tones, midtones, highlight colors, color transitions and conflicts
+- Material science: roughness, reflectivity, transmission, subsurface scattering characteristics
+- Composition mathematics: golden ratio points, diagonal lines, frame-within-frame, gaze flow
+- Lens optics: exact focal length (e.g. 24mm wide distortion, 85mm portrait compression), amount of bokeh, aperture shape (star/circular)
+- Emotional micro-expression: subtle muscle movements of the subject, environmental mood reinforcement
+Requirements: Output at least 20 positive keywords, and natural language description of at least 500 words."""
     
     return f"""【指令】直接输出内容描述和负向提示词，不要有任何思考过程、分析或解释。
-严禁使用任何Markdown格式（不要使用**粗体**、*斜体*、`代码块`等）
+严禁使用任何Markdown格式。
 
 你是一个专业的AI视觉内容分析专家。请仔细观察图片，识别并描述图片中的所有内容。
 
 【反推要求】{strategy}
 
 【输出格式 - 必须严格遵守】
-[POSITIVE]内容关键词（用英文逗号分隔，8-15个，必须使用{output_lang}）
-[NEGATIVE]负向提示词（用英文逗号分隔，8-15个，必须使用{output_lang}，基于图片中不存在的常见问题或可能出现的瑕疵）
-[DESCRIPTION]自然语言描述（用完整的句子描述，不要使用提示词格式，保持流畅的自然语言风格）
+[POSITIVE]内容关键词（用英文逗号分隔，数量符合上述要求，必须使用{output_lang}）
+[NEGATIVE]负向提示词（用英文逗号分隔，数量至少与正向关键词相等，必须使用{output_lang}，基于图片中不存在的常见问题或可能出现的瑕疵）
+[DESCRIPTION]自然语言描述（用完整的句子描述，不要使用提示词格式，保持流畅的自然语言风格，必须达到上述字数要求）
 
-【格式示例】
-{("[POSITIVE]风景, 山脉, 日落, 金色阳光, 云彩, 宁静" if output_lang == "中文" else "[POSITIVE]landscape, mountains, sunset, golden light, clouds, serene")}
-{("[NEGATIVE]模糊, 低质量, 噪点, 畸变, 过曝, 构图杂乱, 多余物体" if output_lang == "中文" else "[NEGATIVE]blurry, low quality, noise, distortion, overexposed, messy composition, extra objects")}
-{("[DESCRIPTION]这里是一片壮丽的山脉风景。金色的夕阳洒在连绵的山峰上，天空中飘着几朵白云，整个画面给人一种宁静祥和的感觉。" if output_lang == "中文" else "[DESCRIPTION]This is a magnificent mountain landscape. The golden sunset casts light on the rolling peaks, with a few white clouds in the sky, creating a peaceful and serene atmosphere.")}
+【格式示例（中文极详细模式）】
+[POSITIVE]年轻女性, 长发, 白色连衣裙, 沙滩, 海浪, 日落, 金色光, 逆光, 柔光, 中景, 低角度, 景深, 8K, 高细节, 电影感, 浪漫, 平静, 海风, 水光反射, 皮肤柔和, 纱裙飘逸
+[NEGATIVE]模糊, 低质量, 噪点, 畸变, 过曝, 抖动, 堵塞阴影, 色彩断层, 水印, 文字, 多余肢体, 不自然表情, 杂乱背景, 错误解剖, 重复纹理, 颜色溢出, 缺乏细节, 扁平光
+[DESCRIPTION]这张图片是一幅优美的夕阳人像特写。一位年轻女性站在沙滩上，面朝大海，长发被海风吹起。她身穿白色连衣裙，裙摆微微飘动。夕阳位于画面右后方，产生强烈的逆光效果，在人物轮廓上形成金黄色的边缘光。光线温暖柔和，阴影拉长，整个场景笼罩在金色调中。中景低角度构图，前景有少量虚化的浪花，背景是波光粼粼的海面和淡紫色的晚霞。人物的皮肤质感细腻，带有微微的暖色高光。整体氛围浪漫、平静，像电影中的一帧画面。
 
 直接输出："""
 
