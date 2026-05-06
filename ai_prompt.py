@@ -209,123 +209,229 @@ def _ai_chat(url: str, token: str, model: str, msg: str, timeout: int = 60, imag
     raise Exception("连接失败")
 
 
-def _format_image_prompt(manual_text: str, optional_text: str, mode: str, detail_level: str, output_lang: str) -> str:
-    """格式化图片提示词 - 保留具体内容并主动扩展细节"""
+def _format_image_prompt(manual_text: str, optional_text: str, mode: str, 
+                         output_type: str, detail_level: str, output_lang: str) -> str:
+    """格式化图片提示词，支持词汇模式(关键词)和整句模式(自然语言)"""
     has_manual = manual_text and manual_text.strip()
     has_optional = optional_text and optional_text.strip()
     
-    if output_lang == "中文":
-        lang_inst = "使用中文输出"
-    else:
-        lang_inst = "use English output"
+    # 确定任务类型
+    if has_optional and has_manual:
+        task_type = "both"
+    elif has_optional:
+        task_type = "only_optional"
+    else:  # has_manual
+        task_type = "only_manual"
     
-    # 根据详细程度确定最少词数要求
+    # 根据详细程度设置最低建议数量（非强制）
     if detail_level == "标准":
-        min_positive_words = 60
-        min_negative_words = 20
+        if output_type == "词汇":
+            min_positive = 60
+            min_negative = 20
+        else:
+            min_positive_chars = 200
+            min_negative_chars = 80
     elif detail_level == "详细":
-        min_positive_words = 120
-        min_negative_words = 30
+        if output_type == "词汇":
+            min_positive = 120
+            min_negative = 30
+        else:
+            min_positive_chars = 400
+            min_negative_chars = 150
     else:  # 极详细
-        min_positive_words = 200
-        min_negative_words = 40
+        if output_type == "词汇":
+            min_positive = 200
+            min_negative = 40
+        else:
+            min_positive_chars = 600
+            min_negative_chars = 200
     
     lines = []
     lines.append("【指令】直接输出正向和负向提示词，不要有任何思考过程、分析或解释。")
     lines.append("严禁使用任何Markdown格式。")
     lines.append("")
-    lines.append(f"你是一个专业的AI绘画提示词专家。{lang_inst}。")
-    lines.append("")
     
-    # 提示词公式参考
-    if mode == "文生图":
-        lines.append("【提示词公式参考】主体 + 场景 + 风格 + 光线 + 构图 + 质量")
-    else:
-        lines.append("【提示词公式参考】图生图：保留原图核心 + 描述修改方向")
-    lines.append("")
-    
-    # 核心创作规则
-    lines.append("【核心创作规则 - 必须严格遵守】")
-    lines.append("1. **禁止只输出通用画质词**（如“杰作,最佳质量,8K,高细节”等）。通用词最多占正向提示词的20%。")
-    lines.append("2. **至少80%的正向提示词必须来自用户输入的具体内容**，并且要**主动扩展细节**：")
-    lines.append("   - 提取用户描述中的核心名词、形容词、动作。")
-    lines.append("   - 为每个核心元素添加合理的细节（例如：“草帽” → “破旧的草帽, 帽檐磨损, 麻绳绑带”）。")
-    lines.append("   - 扩展场景：根据已有环境添加协调的额外元素（例如：有“沙滩”可扩展“贝壳, 海浪泡沫, 湿沙反光”）。")
-    lines.append("3. **不要生硬套用分类**：直接输出关键词序列即可。")
-    lines.append("4. **顺序要求**：先列出具体内容词（核心元素及其细节），最后再添加少量通用质量/风格/光线词。")
-    lines.append("")
-    
-    # 示例对比（略）
+    # 角色描述（纯语言，避免中英文混用）
     if output_lang == "中文":
-        lines.append("【正确与错误示例】")
-        lines.append("用户输入：'一个戴着草帽的老渔夫坐在生锈的船上，手里拿着渔网，背景是黄昏的海港'")
-        lines.append("✅ 正确输出（扩展充分）：草帽, 破旧草帽, 帽檐磨损, 老渔夫, 满脸皱纹, 深褐色皮肤, 白色胡茬, 粗糙双手, 指甲裂缝, 生锈的船, 剥落绿漆, 铆钉, 渔网, 麻绳, 木质甲板, 黄昏, 橙紫色天空, 长影子, 金色边缘光, 海港, 停泊船只, 码头木桩, 波光粼粼, 海鸥, 写实风格, 电影感, 柔光, 中景, 8K")
-        lines.append("❌ 错误输出（只输出通用词）：杰作, 最佳质量, 8K, 高细节, 电影感, 柔光, 中景, 写实")
+        if mode == "文生图":
+            lines.append("你是一个专业的AI绘画提示词专家，使用中文输出，文生图模式。")
+        else:
+            lines.append("你是一个专业的AI绘画提示词专家，使用中文输出，图生图模式。")
     else:
-        lines.append("【Good vs Bad Examples】")
-        lines.append("User input: 'an old fisherman in a straw hat sitting on a rusty boat, holding a fishing net, background is a dusk harbor'")
-        lines.append("✅ Good: straw hat, worn straw hat, frayed brim, hemp strap, old fisherman, wrinkled face, dark brown skin, white stubble, rough hands, cracked nails, rusty boat, peeling green paint, rivets, fishing net, hemp rope, wooden deck, dusk, orange-purple sky, long shadows, golden rim light, harbor, moored boats, dock pilings, sparkling water, seagulls, realistic style, cinematic, soft lighting, medium shot, 8K")
-        lines.append("❌ Bad: masterpiece, best quality, 8K, high detail, cinematic, soft lighting, medium shot, realistic")
+        if mode == "文生图":
+            lines.append("You are a professional AI image prompt expert. Use English output, text-to-image mode.")
+        else:
+            lines.append("You are a professional AI image prompt expert. Use English output, image-to-image mode.")
     lines.append("")
     
-    # 详细程度描述（与最少词数一致）
-    lines.append(f"【详细程度】{detail_level}。正向提示词最少 {min_positive_words} 个词，负向提示词最少 {min_negative_words} 个词。")
-    lines.append("关键词用英文逗号分隔，不要换行。")
-    lines.append("")
+    # ========== 词汇模式 ==========
+    if output_type == "词汇":
+        # 公共规则（所有任务类型共用）
+        if output_lang == "中文":
+            lines.append("【词汇模式规则 - 中文关键词】")
+            lines.append("1. 输出**中文关键词为主**，允许使用 8K、4K、UHD、HDR 等通用画质缩略词。")
+            lines.append("   - 允许的英文缩略词：8K, 4K, UHD, HDR, PBR 等常见术语。")
+            lines.append("   - 禁止的全英文单词：photorealistic, cinematic, sharp focus, volumetric light 等。这些必须用中文表达（照片级真实、电影感、清晰对焦、体积光）。")
+            lines.append("2. 使用英文逗号加空格分隔关键词。")
+            lines.append("3. 只输出关键词本身，严禁添加括号注释（如“（替换为主要互动对象）”）。")
+            lines.append("4. 权重语法：使用英文半角括号 ( ) 和 [ ]，以及英文冒号 :。")
+            lines.append("   正确：(杰作), (最佳质量:1.2), (玫瑰:1.1), [模糊背景], 8K, UHD")
+            lines.append("   错误：（杰作）（中文括号）, 最佳质量：1.2（中文冒号）, photorealistic (英文单词)")
+            lines.append("5. 语序建议：先写主体和核心动作，再写场景、构图、风格，最后写画质强化词。")
+            lines.append("")
+        else:
+            lines.append("【Vocabulary Mode Rules - English Keywords】")
+            lines.append("1. Output English keywords only, comma+space separated. No Chinese characters.")
+            lines.append("2. Allowed short forms: 8K, 4K, UHD, HDR, PBR. Use weight syntax: ( ), [ ], :value.")
+            lines.append("3. Word order: subject/action → scene → composition → style → quality.")
+            lines.append("")
+        
+        # 根据任务类型添加差异化内容
+        if task_type == "both":
+            if output_lang == "中文":
+                lines.append("【任务类型】综合原图描述与手工提示词（手工提示词优先修改冲突部分）")
+                lines.append("【原图描述】" + optional_text.strip())
+                lines.append("【手工提示词】" + manual_text.strip())
+                lines.append("")
+                lines.append("【处理规则】")
+                lines.append("1. 原图描述提供基础画面（背景、主体、额外元素、光线、风格）。")
+                lines.append("2. 如果手工提示词与原图中的动作、物体、场景发生冲突，则以手工提示词为准，替换冲突部分。")
+                lines.append("3. 原图中不冲突的元素（如背景、光线、色调、额外人物/动物/物体）必须保留并融合。")
+                lines.append("4. 为所有元素添加丰富细节（材质、光影、表情、环境）。")
+                lines.append("5. 最后补充少量通用画质词（不超过20%）。")
+                lines.append("")
+                lines.append("【示例】")
+                lines.append("原图描述：'一个穿蓝衬衫的男人坐在公园长椅上喝咖啡，旁边有一只松鼠。'")
+                lines.append("手工提示词：'他在喂鸽子。'")
+                lines.append("✅ 正确输出：蓝衬衫男人, 坐在公园长椅, 喂鸽子, 手心捧着面包屑, (鸽子:1.2), 白鸽子, 灰鸽子, 啄食, 松鼠, 绿树, 阳光, 中景, 写实风格, 8K")
+            else:
+                lines.append("【Task】Combine original and manual (manual overrides conflicts).")
+                lines.append("Original: " + optional_text.strip())
+                lines.append("Manual: " + manual_text.strip())
+                lines.append("Rules: Keep non-conflicting elements; add details; add generic quality words ≤20%.")
+                lines.append("Example: Original 'A man in blue shirt drinking coffee on a bench, with a squirrel.' Manual 'He is feeding pigeons.' → Good: man in blue shirt, sitting on bench, feeding pigeons, holding breadcrumbs, (pigeons:1.2), white pigeons, gray pigeons, pecking, squirrel, green trees, sunlight, medium shot, photorealistic, 8K")
+        elif task_type == "only_optional":
+            if output_lang == "中文":
+                lines.append("【任务类型】仅基于原图描述生成提示词（无修改方向）")
+                lines.append("【原图描述】" + optional_text.strip())
+                lines.append("")
+                lines.append("【处理规则】")
+                lines.append("1. 从原图描述中提取所有视觉元素（主体、动作、场景、光线、风格等）。")
+                lines.append("2. 为每个核心元素添加合理的细节扩展（材质、光影、氛围）。")
+                lines.append("3. 根据场景添加协调的额外环境元素（例如森林可扩展松树、青苔）。")
+                lines.append("4. 最后补充少量通用画质词（不超过20%）。")
+                lines.append("")
+                lines.append("【示例】")
+                lines.append("原图描述：'一个穿红裙的女孩在花园里浇花，阳光明媚。'")
+                lines.append("✅ 正确输出：红裙女孩, 花园浇花, 手持绿色水壶, 水珠洒落, 玫瑰花, 郁金香, 阳光, 金色光斑, 绿草地, 蝴蝶, 中景, 写实风格, 8K, UHD")
+            else:
+                lines.append("【Task】Generate from original description only.")
+                lines.append("Original: " + optional_text.strip())
+                lines.append("Rules: Extract all elements, add details, add scene expansions, then quality words.")
+                lines.append("Example: Original 'A girl in red dress watering flowers in a sunny garden.' → Good: girl in red dress, watering flowers, holding green watering can, water droplets, roses, tulips, sunlight, golden flares, green grass, butterfly, medium shot, photorealistic, 8K")
+        else:  # only_manual
+            if output_lang == "中文":
+                lines.append("【任务类型】仅基于手工提示词生成提示词（无原图参考）")
+                lines.append("【手工提示词】" + manual_text.strip())
+                lines.append("")
+                lines.append("【处理规则】")
+                lines.append("1. 从手工提示词中提取核心元素（主体、动作、物体）。")
+                lines.append("2. 为每个核心元素添加丰富的细节扩展（材质、光影、表情）。")
+                lines.append("3. 自行构建合理的场景、光线、构图、氛围来丰富画面。")
+                lines.append("4. 最后补充少量通用画质词（不超过20%）。")
+                lines.append("")
+                lines.append("【示例】")
+                lines.append("手工提示词：'一个老人坐在海边钓鱼。'")
+                lines.append("✅ 正确输出：老人, 坐在礁石上, 手持鱼竿, 鱼线垂入海面, 海浪拍打, 夕阳, 金色逆光, 海鸥, 远处帆船, 低角度, 电影感, 8K")
+            else:
+                lines.append("【Task】Generate from manual prompt only (no original).")
+                lines.append("Manual: " + manual_text.strip())
+                lines.append("Rules: Extract core elements, add rich details, create reasonable scene/lighting/composition, then quality words.")
+                lines.append("Example: Manual 'An old man sitting by the sea fishing.' → Good: old man, sitting on rock, holding fishing rod, fishing line dipping into sea, waves crashing, sunset, golden backlight, seagulls, distant sailboat, low angle, cinematic, 8K")
+        
+        # 共用数量建议和输出格式
+        lines.append("")
+        if output_lang == "中文":
+            lines.append(f"【数量建议】正向关键词建议至少达到 {min_positive} 个词，负向至少 {min_negative} 个词。")
+            lines.append("- 过少可能导致画面元素遗漏，请通过扩展细节自然增加词汇量，不要硬凑。")
+            lines.append("")
+            lines.append("【输出格式】")
+            lines.append("[POSITIVE]（中文关键词+允许的缩略词，英文逗号+空格分隔，使用英文括号权重）")
+            lines.append("[NEGATIVE]（中文关键词+允许的缩略词，英文逗号+空格分隔，使用英文括号权重）")
+        else:
+            lines.append(f"【Suggestion】Positive at least {min_positive} words, negative at least {min_negative} words.")
+            lines.append("- Expand details naturally; avoid forcing words.")
+            lines.append("")
+            lines.append("【Output Format】")
+            lines.append("[POSITIVE] (English keywords, comma+space, English parentheses)")
+            lines.append("[NEGATIVE] (English keywords, comma+space, English parentheses)")
     
-    # 输出格式（动态显示数量要求）
-    lines.append("【输出格式】")
-    if output_lang == "中文":
-        lines.append(f"[POSITIVE]正向提示词（必须使用中文，逗号分隔，至少 {min_positive_words} 个词）")
-        lines.append(f"[NEGATIVE]负向提示词（必须使用中文，逗号分隔，至少 {min_negative_words} 个词）")
+    # ========== 整句模式 ==========
     else:
-        lines.append(f"[POSITIVE]positive prompt (English, comma separated, at least {min_positive_words} words)")
-        lines.append(f"[NEGATIVE]negative prompt (English, comma separated, at least {min_negative_words} words)")
+        # 整句模式公共规则
+        if output_lang == "中文":
+            lines.append("【整句模式规则】输出自然语言段落，不要用逗号分隔的关键词。")
+            lines.append("1. 使用中文，允许 8K、4K、UHD 等缩略词。")
+            lines.append("2. 充分扩展细节（材质、光线、氛围等）。")
+            lines.append("3. 负向提示词也用自然语言。")
+            lines.append("")
+        else:
+            lines.append("【Sentence Mode Rules】Natural language paragraph, English only.")
+            lines.append("1. Expand details (texture, lighting, atmosphere).")
+            lines.append("2. Negative prompt also natural language.")
+            lines.append("")
+        
+        # 根据任务类型添加差异化内容
+        if task_type == "both":
+            if output_lang == "中文":
+                lines.append("【任务】综合原图与手工提示词（手工优先）。")
+                lines.append("原图：" + optional_text.strip())
+                lines.append("手工：" + manual_text.strip())
+                lines.append("规则：冲突替换，不冲突保留，扩展细节。")
+                lines.append("示例：原图'蓝衬衫男人喝咖啡，有松鼠'，手工'喂鸽子' → 正确输出：一个穿蓝衬衫的男人坐在公园长椅上，手里捧着面包屑，正在喂鸽子。旁边还有一只松鼠。背景是绿树和阳光。")
+            else:
+                lines.append("Task: Combine original and manual (manual overrides conflicts).")
+                lines.append("Original: " + optional_text.strip())
+                lines.append("Manual: " + manual_text.strip())
+                lines.append("Example: Original 'A man in blue shirt drinking coffee, with a squirrel.' Manual 'feeding pigeons.' → Good: A man in blue shirt sits on a bench, holding breadcrumbs, feeding pigeons. A squirrel is nearby. Green trees, sunlight.")
+        elif task_type == "only_optional":
+            if output_lang == "中文":
+                lines.append("【任务】基于原图描述生成。")
+                lines.append("原图：" + optional_text.strip())
+                lines.append("规则：提取元素，扩展细节，补充场景。")
+                lines.append("示例：原图'红裙女孩在花园浇花' → 正确输出：一个穿红裙的女孩在花园里浇花，手持绿色水壶，水珠洒在玫瑰和郁金香上。阳光明媚，蝴蝶飞舞。中景，写实风格，8K超高清。")
+            else:
+                lines.append("Task: Generate from original description only.")
+                lines.append("Original: " + optional_text.strip())
+                lines.append("Example: Original 'A girl in red dress watering flowers in a sunny garden.' → Good: A girl in a red dress waters flowers in a garden, holding a green watering can. Water droplets fall on roses and tulips. Sunlight, butterflies. Medium shot, realistic, 8K.")
+        else:  # only_manual
+            if output_lang == "中文":
+                lines.append("【任务】基于手工提示词生成（无原图）。")
+                lines.append("手工：" + manual_text.strip())
+                lines.append("规则：提取核心，扩展细节，构建场景。")
+                lines.append("示例：手工'老人海边钓鱼' → 正确输出：一个老人坐在海边的礁石上，手持鱼竿，鱼线垂入海面。夕阳西下，金色逆光，海鸥飞翔，远处有帆船。低角度，电影感，8K。")
+            else:
+                lines.append("Task: Generate from manual prompt only (no original).")
+                lines.append("Manual: " + manual_text.strip())
+                lines.append("Example: Manual 'An old man sitting by the sea fishing.' → Good: An old man sits on a rock by the sea, holding a fishing rod. The line dips into the water. Sunset, golden backlight, seagulls, distant sailboat. Low angle, cinematic, 8K.")
+        
+        # 共用数量建议和输出格式
+        lines.append("")
+        if output_lang == "中文":
+            lines.append(f"【数量建议】正向描述至少 {min_positive_chars} 字符，负向至少 {min_negative_chars} 字符。")
+            lines.append("")
+            lines.append("【输出格式】")
+            lines.append("[POSITIVE]（自然语言段落，中文+允许的缩略词）")
+            lines.append("[NEGATIVE]（自然语言段落，中文+允许的缩略词）")
+        else:
+            lines.append(f"【Suggestion】Positive at least {min_positive_chars} words, negative at least {min_negative_chars} words.")
+            lines.append("")
+            lines.append("【Output Format】")
+            lines.append("[POSITIVE] (natural language paragraph, English only)")
+            lines.append("[NEGATIVE] (natural language paragraph, English only)")
+    
     lines.append("")
-    
-    # 用户输入部分（保持不变）
-    if has_optional and has_manual:
-        lines.append("【任务】综合以下内容，创作高质量的正向和负向提示词。")
-        lines.append("")
-        lines.append("【原图描述】（核心内容基础，必须保留并扩展）：")
-        lines.append(optional_text.strip())
-        lines.append("")
-        lines.append("【手工提示词】（扩展/修改方向，必须融入并扩展）：")
-        lines.append(manual_text.strip())
-        lines.append("")
-        lines.append("【详细要求】")
-        lines.append("1. 从上述两个描述中提取所有具体的视觉元素（人物、物体、场景、颜色、动作、材质等）。")
-        lines.append("2. 为每个元素添加合理的细节扩展（参考上面的示例方式）。")
-        lines.append("3. 根据场景添加协调的额外环境元素（例如：如果有“森林”，可以添加“松树、蕨类、青苔、光束”）。")
-        lines.append("4. 如果手工提示词与原图描述有冲突，则按手工提示词调整，但仍尽量保留原图其他可用元素。")
-        lines.append("5. 最后补充少量（不超过20%）通用画质/风格/光线/构图词。")
-        lines.append("6. 负向提示词：根据扩展后的最终画面，排除常见的画质问题、结构问题和不需要的元素。")
-        lines.append(f"7. **必须进行充分的细节扩展和场景扩展，确保正向提示词达到 {min_positive_words} 个词以上。**")
-    elif has_optional and not has_manual:
-        lines.append("【任务】基于以下原图描述，创作高质量的正向和负向提示词。")
-        lines.append("")
-        lines.append("【原图描述】：")
-        lines.append(optional_text.strip())
-        lines.append("")
-        lines.append("【详细要求】")
-        lines.append("- 提取所有核心元素并添加细节扩展。")
-        lines.append("- 添加合理的场景扩展元素，使画面更丰富。")
-        lines.append("- 最后补充少量通用画质/风格/光线/构图词。")
-        lines.append(f"- **必须确保正向提示词达到 {min_positive_words} 个词以上。**")
-    elif not has_optional and has_manual:
-        lines.append("【任务】根据以下手工提示词，创作高质量的正向和负向提示词。")
-        lines.append("")
-        lines.append("【手工提示词】：")
-        lines.append(manual_text.strip())
-        lines.append("")
-        lines.append("【详细要求】")
-        lines.append("- 提取所有核心元素并添加细节扩展。")
-        lines.append("- 添加合理的场景和氛围元素。")
-        lines.append(f"- **必须确保正向提示词达到 {min_positive_words} 个词以上。**")
-    
-    lines.append("")
-    lines.append(f"直接输出（{lang_inst}）：")
-    
+    lines.append("直接输出：")
     return "\n".join(lines)
 
 
@@ -334,14 +440,15 @@ def _format_video_prompt(manual_text: str, optional_text: str, mode: str, detail
     has_manual = manual_text and manual_text.strip()
     has_optional = optional_text and optional_text.strip()
     
-    if output_lang == "中文":
-        lang_inst = "使用中文输出"
-        mode_text = "文生视频" if mode == "文生视频" else "图生视频"
-    else:
-        lang_inst = "use English output"
-        mode_text = "text-to-video" if mode == "文生视频" else "image-to-video"
+    # 确定任务类型（简化逻辑）
+    if has_optional and has_manual:
+        task_type = "both"
+    elif has_optional:
+        task_type = "only_optional"
+    else:  # has_manual
+        task_type = "only_manual"
     
-    # 根据详细程度设定关键词数量（较低）及描述字数（较高）
+    # 根据详细程度设定关键词数量和描述字数
     if detail_level == "标准":
         min_keywords = 15
         max_keywords = 25
@@ -349,20 +456,27 @@ def _format_video_prompt(manual_text: str, optional_text: str, mode: str, detail
     elif detail_level == "详细":
         min_keywords = 25
         max_keywords = 35
-        min_desc_words = 500
+        min_desc_words = 400
     else:  # 极详细
         min_keywords = 35
         max_keywords = 45
-        min_desc_words = 800
+        min_desc_words = 600
     
     lines = []
     lines.append("【指令】直接输出正向和负向提示词及详细描述，不要有任何思考过程、分析或解释。")
     lines.append("严禁使用任何Markdown格式。")
     lines.append("")
-    lines.append(f"你是一个专业的视频提示词专家。{lang_inst}，{mode_text}模式。")
+    
+    # 角色描述（纯语言，避免中英文混用）
+    if output_lang == "中文":
+        mode_text = "文生视频" if mode == "文生视频" else "图生视频"
+        lines.append(f"你是一个专业的视频提示词专家。使用中文输出，{mode_text}模式。")
+    else:
+        mode_text = "text-to-video" if mode == "文生视频" else "image-to-video"
+        lines.append(f"You are a professional video prompt expert. Use English output, {mode_text} mode.")
     lines.append("")
     
-    # 核心规则
+    # ========== 公共核心规则 ==========
     lines.append("【核心创作规则 - 必须严格遵守】")
     lines.append("1. **至少60%的正向关键词可以来自场景、光线、构图等通用元素**，但必须保留用户输入中的核心角色和物体。")
     lines.append("2. **剧情描述（DESCRIPTION）是重点**，必须充分扩展，达到字数要求。")
@@ -372,8 +486,6 @@ def _format_video_prompt(manual_text: str, optional_text: str, mode: str, detail
     lines.append("4. 为每个核心元素添加丰富的细节，并主动扩展场景和环境。")
     lines.append("5. **禁止生搬硬套预定义类别**；直接输出关键词序列即可。")
     lines.append("")
-    
-    # 叙事逻辑
     lines.append("【叙事逻辑要求】")
     lines.append("- 详细场景描述必须按时间顺序：先描述首帧（或起始状态），然后描述镜头运动，再按时间顺序描述动作序列（先...然后...接着...最后...）。")
     lines.append("- 动作之间要有明确的因果或连贯关系，避免动作堆叠。")
@@ -381,19 +493,20 @@ def _format_video_prompt(manual_text: str, optional_text: str, mode: str, detail
     lines.append("- 描述应充分展开，达到上述字数要求。")
     lines.append("")
     
-    # 输出格式（动态显示数量）
-    lines.append("【输出格式】")
+    # ========== 输出格式 ==========
     if output_lang == "中文":
+        lines.append("【输出格式】")
         lines.append(f"[POSITIVE]正向关键词（英文逗号分隔，{min_keywords}-{max_keywords}个，必须使用中文）")
         lines.append(f"[NEGATIVE]负向关键词（英文逗号分隔，至少{min_keywords//2}个，必须使用中文）")
         lines.append(f"[DESCRIPTION]详细场景描述（自然语言，必须使用中文，不少于{min_desc_words}字）")
     else:
-        lines.append(f"[POSITIVE]positive keywords (comma separated, {min_keywords}-{max_keywords} words, must use English)")
-        lines.append(f"[NEGATIVE]negative keywords (comma separated, at least {min_keywords//2} words, must use English)")
-        lines.append(f"[DESCRIPTION]detailed scene description (natural language, must use English, at least {min_desc_words} words)")
+        lines.append("【Output Format】")
+        lines.append(f"[POSITIVE]positive keywords (comma separated, {min_keywords}-{max_keywords} words, English)")
+        lines.append(f"[NEGATIVE]negative keywords (comma separated, at least {min_keywords//2} words, English)")
+        lines.append(f"[DESCRIPTION]detailed scene description (natural language, English, at least {min_desc_words} words)")
     lines.append("")
     
-    # 示例（展示剧情扩展）
+    # ========== 示例（展示剧情扩展） ==========
     if output_lang == "中文":
         lines.append("【示例】")
         lines.append("用户输入：'一只金毛犬在黄昏的沙滩上，镜头跟随它'")
@@ -408,7 +521,7 @@ def _format_video_prompt(manual_text: str, optional_text: str, mode: str, detail
         lines.append("[DESCRIPTION][First frame] Medium shot, a golden retriever stands on wet sand, backlit by the setting sun. Camera static. [Camera movement] Camera begins tracking forward. [Action] Dog sniffs the sand, then breaks into a sprint. After a few strides, it veers left, a wave washes over its paws, and it leaps over the foam. Then it charges toward a seagull, the gull takes flight, the dog chases then stops, looks back, panting. [Scene expansion] Ocean sparkles, a fishing boat visible, sky transitions from orange to purple. As night falls, street lamps light up on the beach, the dog's silhouette stretches, and in slow motion it sits down, gazing at the sea.")
     lines.append("")
     
-    # 知识库（保留作为可选参考）
+    # ========== 可选知识库 ==========
     if output_lang == "中文":
         lines.append("【可选的参考知识库 - 仅当需要时使用】")
         lines.append("光源类型: 日光、人工光、月光、实用光、火光、荧光、阴天光、混合光、晴天光")
@@ -435,51 +548,89 @@ def _format_video_prompt(manual_text: str, optional_text: str, mode: str, detail
         lines.append("Effects: slow motion, motion blur, lens flare, tilt-shift, time-lapse")
     lines.append("")
     
-    # 用户输入部分（保持不变，但调整了关键词数量提示）
-    if has_optional and has_manual:
-        lines.append("【任务】综合以下内容，创作高质量的正向/负向关键词和详细场景描述。")
-        lines.append("")
-        lines.append("【原图/首帧描述】（必须保留并扩展）：")
-        lines.append(optional_text.strip())
-        lines.append("")
-        lines.append("【手工提示词】（扩展/修改方向，必须融入并扩展）：")
-        lines.append(manual_text.strip())
-        lines.append("")
-        lines.append("【详细要求】")
-        lines.append("- 从上述描述中提取核心角色、物体、场景，并添加细节。")
-        lines.append("- **重点在于DESCRIPTION**，要详细设计后续剧情，包括动作序列、镜头运动、环境变化、时间流逝、新元素加入等。")
-        lines.append("- 正向关键词只需包含主要对象、场景、光线、构图、风格即可，不必过多扩展。")
-        lines.append("- 负向关键词针对常见视频瑕疵。")
-        lines.append(f"- 确保正向关键词数量在{min_keywords}-{max_keywords}之间，描述不少于{min_desc_words}字。")
-    elif has_optional and not has_manual:
-        lines.append("【任务】基于以下原图/首帧描述，创作高质量的正向/负向关键词和详细场景描述。")
-        lines.append("")
-        lines.append("【原图/首帧描述】：")
-        lines.append(optional_text.strip())
-        lines.append("")
-        lines.append("【详细要求】")
-        lines.append("- 提取核心元素，并在DESCRIPTION中扩展剧情。")
-        lines.append(f"- 正向关键词{min_keywords}-{max_keywords}个，描述不少于{min_desc_words}字。")
-    elif not has_optional and has_manual:
-        lines.append("【任务】根据以下手工提示词，创作高质量的正向/负向关键词和详细场景描述。")
-        lines.append("")
-        lines.append("【手工提示词】：")
-        lines.append(manual_text.strip())
-        lines.append("")
-        lines.append("【详细要求】")
-        lines.append("- 根据手工提示词构建完整视频剧情，DESCRIPTION是关键。")
-        lines.append(f"- 正向关键词{min_keywords}-{max_keywords}个，描述不少于{min_desc_words}字。")
+    # ========== 根据任务类型添加用户输入和具体要求 ==========
+    if task_type == "both":
+        if output_lang == "中文":
+            lines.append("【任务】综合以下内容，创作高质量的正向/负向关键词和详细场景描述。")
+            lines.append("【原图/首帧描述】（必须保留并扩展）：")
+            lines.append(optional_text.strip())
+            lines.append("")
+            lines.append("【手工提示词】（扩展/修改方向，必须融入并扩展）：")
+            lines.append(manual_text.strip())
+            lines.append("")
+            lines.append("【详细要求】")
+            lines.append("- 从上述描述中提取核心角色、物体、场景，并添加细节。")
+            lines.append("- **重点在于DESCRIPTION**，要详细设计后续剧情，包括动作序列、镜头运动、环境变化、时间流逝、新元素加入等。")
+            lines.append("- 正向关键词只需包含主要对象、场景、光线、构图、风格即可，不必过多扩展。")
+            lines.append("- 负向关键词针对常见视频瑕疵。")
+            lines.append(f"- 确保正向关键词数量在{min_keywords}-{max_keywords}之间，描述不少于{min_desc_words}字。")
+            lines.append("- 如果手工提示词与原图描述存在冲突（例如动作、物体不同），以手工提示词为准，替换冲突部分，不冲突的元素保留。")
+        else:
+            lines.append("【Task】Combine the following to create positive/negative keywords and detailed scene description.")
+            lines.append("【Original/First frame description】（must keep and expand）：")
+            lines.append(optional_text.strip())
+            lines.append("")
+            lines.append("【Manual prompt】（direction for modification, must integrate and expand）：")
+            lines.append(manual_text.strip())
+            lines.append("")
+            lines.append("【Requirements】")
+            lines.append("- Extract core characters, objects, scenes and add details.")
+            lines.append("- **Focus on DESCRIPTION**: design subsequent actions, camera movement, environmental changes, time passage, new elements.")
+            lines.append("- Positive keywords only need main objects, scene, lighting, composition, style.")
+            lines.append("- Negative keywords target common video flaws.")
+            lines.append(f"- Ensure positive keywords between {min_keywords}-{max_keywords} words, description at least {min_desc_words} words.")
+            lines.append("- If manual prompt conflicts with original (action, object, etc.), override with manual; keep non-conflicting elements.")
+    elif task_type == "only_optional":
+        if output_lang == "中文":
+            lines.append("【任务】基于以下原图/首帧描述，创作高质量的正向/负向关键词和详细场景描述。")
+            lines.append("【原图/首帧描述】：")
+            lines.append(optional_text.strip())
+            lines.append("")
+            lines.append("【详细要求】")
+            lines.append("- 提取核心元素，并在DESCRIPTION中扩展剧情。")
+            lines.append("- 合理预测后续动作、镜头运动、环境演变。")
+            lines.append(f"- 正向关键词{min_keywords}-{max_keywords}个，描述不少于{min_desc_words}字。")
+        else:
+            lines.append("【Task】Based on the original/first frame description, create positive/negative keywords and detailed scene description.")
+            lines.append("【Original/First frame description】：")
+            lines.append(optional_text.strip())
+            lines.append("")
+            lines.append("【Requirements】")
+            lines.append("- Extract core elements, expand storyline in DESCRIPTION.")
+            lines.append("- Reasonably predict subsequent actions, camera movement, environmental changes.")
+            lines.append(f"- Positive keywords {min_keywords}-{max_keywords} words, description at least {min_desc_words} words.")
+    else:  # only_manual
+        if output_lang == "中文":
+            lines.append("【任务】根据以下手工提示词，创作高质量的正向/负向关键词和详细场景描述（无原图参考）。")
+            lines.append("【手工提示词】：")
+            lines.append(manual_text.strip())
+            lines.append("")
+            lines.append("【详细要求】")
+            lines.append("- 根据手工提示词构建完整视频剧情，DESCRIPTION是关键。")
+            lines.append("- 合理设计动作序列、镜头运动、环境变化等。")
+            lines.append(f"- 正向关键词{min_keywords}-{max_keywords}个，描述不少于{min_desc_words}字。")
+        else:
+            lines.append("【Task】Based on the manual prompt only (no original reference), create positive/negative keywords and detailed scene description.")
+            lines.append("【Manual prompt】：")
+            lines.append(manual_text.strip())
+            lines.append("")
+            lines.append("【Requirements】")
+            lines.append("- Build complete video storyline from manual prompt; DESCRIPTION is key.")
+            lines.append("- Reasonably design action sequences, camera movement, environmental changes.")
+            lines.append(f"- Positive keywords {min_keywords}-{max_keywords} words, description at least {min_desc_words} words.")
     
     lines.append("")
-    lines.append(f"直接输出（{lang_inst}）：")
-    
+    if output_lang == "中文":
+        lines.append("直接输出：")
+    else:
+        lines.append("Direct output:")
     return "\n".join(lines)
 
 
 def _format_content_interrogation(image_base64: str, detail_level: str, output_lang: str) -> str:
-    """格式化内容反推提示词 - 输出内容描述和负向提示词（深层次描述）"""
+    """格式化内容反推提示词 - 输出内容描述和负向提示词（深层次描述），语言完全分离"""
     if output_lang == "中文":
-        lang_inst = "使用中文输出"
+        # 中文版本 ==========
         if detail_level == "标准":
             strategy = """详细描述图片中的主体（外观、姿态、服饰）、主要场景（环境元素）、整体光线方向、主色调和大致氛围。
 要求：输出至少10个正向关键词，自然语言描述不少于120字。"""
@@ -504,12 +655,32 @@ def _format_content_interrogation(image_base64: str, detail_level: str, output_l
 - 镜头光学：焦段具体数值（如24mm广角畸变、85mm人像压缩）、光圈导致的虚化量、光圈形状（星芒/圆形）
 - 情绪微相：主体细微表情的肌肉运动、环境对情绪的烘托
 要求：输出至少20个正向关键词，自然语言描述不少于500字。"""
+        
+        return f"""【指令】直接输出内容描述和负向提示词，不要有任何思考过程、分析或解释。
+严禁使用任何Markdown格式。
+
+你是一个专业的AI视觉内容分析专家。请仔细观察图片，识别并描述图片中的所有内容。
+
+【反推要求】{strategy}
+
+【输出格式 - 必须严格遵守】
+[POSITIVE]内容关键词（用英文逗号分隔，数量符合上述要求，必须使用中文）
+[NEGATIVE]负向提示词（用英文逗号分隔，必须使用中文，基于图片中不存在的常见问题或可能出现的瑕疵，数量不必与正向相等，但必须至少列出8个以上常见瑕疵词）
+[DESCRIPTION]自然语言描述（用完整的句子描述，不要使用提示词格式，保持流畅的自然语言风格，必须达到上述字数要求）
+
+【格式示例（中文极详细模式）】
+[POSITIVE]年轻女性, 长发, 白色连衣裙, 沙滩, 海浪, 日落, 金色光, 逆光, 柔光, 中景, 低角度, 景深, 8K, 高细节, 电影感, 浪漫, 平静, 海风, 水光反射, 皮肤柔和, 纱裙飘逸
+[NEGATIVE]模糊, 低质量, 噪点, 畸变, 过曝, 抖动, 堵塞阴影, 色彩断层, 水印, 文字, 多余肢体, 不自然表情, 杂乱背景, 错误解剖, 重复纹理, 颜色溢出, 缺乏细节, 扁平光
+[DESCRIPTION]这张图片是一幅优美的夕阳人像特写。一位年轻女性站在沙滩上，面朝大海，长发被海风吹起。她身穿白色连衣裙，裙摆微微飘动。夕阳位于画面右后方，产生强烈的逆光效果，在人物轮廓上形成金黄色的边缘光。光线温暖柔和，阴影拉长，整个场景笼罩在金色调中。中景低角度构图，前景有少量虚化的浪花，背景是波光粼粼的海面和淡紫色的晚霞。人物的皮肤质感细腻，带有微微的暖色高光。整体氛围浪漫、平静，像电影中的一帧画面。
+
+直接输出："""
+    
     else:
-        lang_inst = "use English output"
-        if detail_level == "standard":
+        # 英文版本 ==========
+        if detail_level == "标准":
             strategy = """Describe in detail the subject (appearance, pose, clothing), main scene (environmental elements), overall lighting direction, dominant colors, and general mood.
 Requirements: Output at least 10 positive keywords, and natural language description of at least 120 words."""
-        elif detail_level == "detailed":
+        elif detail_level == "详细":
             strategy = """Describe every visual layer in great detail:
 - Subject: specific features (age, gender, expression, hair, action, clothing)
 - Scene: precise environment (background details, foreground elements, depth layering, spatial relations)
@@ -519,7 +690,7 @@ Requirements: Output at least 10 positive keywords, and natural language descrip
 - Composition: lens focal length, shot size, angle, leading lines, negative space
 - Mood: overall atmosphere, emotional tendency
 Requirements: Output at least 15 positive keywords, and natural language description of at least 250 words."""
-        else:  # extreme
+        else:  # 极详细
             strategy = """Dissect every visual atom of the image at an extreme depth:
 - Subject micro-details: pupil specular, hair strand direction, skin pores, cloth wrinkles/fibers, jewelry reflections
 - Scene anatomy: exact objects in background, their count, relative positions, occlusions, depth-of-field effects
@@ -530,25 +701,27 @@ Requirements: Output at least 15 positive keywords, and natural language descrip
 - Lens optics: exact focal length (e.g. 24mm wide distortion, 85mm portrait compression), amount of bokeh, aperture shape (star/circular)
 - Emotional micro-expression: subtle muscle movements of the subject, environmental mood reinforcement
 Requirements: Output at least 20 positive keywords, and natural language description of at least 500 words."""
-    
-    return f"""【指令】直接输出内容描述和负向提示词，不要有任何思考过程、分析或解释。
-严禁使用任何Markdown格式。
+        
+        return f"""Instruction: Directly output content description and negative prompt. No thinking process, analysis, or explanation. No markdown.
 
-你是一个专业的AI视觉内容分析专家。请仔细观察图片，识别并描述图片中的所有内容。
+You are a professional AI visual content analysis expert. Carefully observe the image and describe all content.
 
-【反推要求】{strategy}
+Analysis requirements: {strategy}
 
-【输出格式 - 必须严格遵守】
-[POSITIVE]内容关键词（用英文逗号分隔，数量符合上述要求，必须使用{output_lang}）
-[NEGATIVE]负向提示词（用英文逗号分隔，数量至少与正向关键词相等，必须使用{output_lang}，基于图片中不存在的常见问题或可能出现的瑕疵）
-[DESCRIPTION]自然语言描述（用完整的句子描述，不要使用提示词格式，保持流畅的自然语言风格，必须达到上述字数要求）
+You MUST follow this exact output format:
 
-【格式示例（中文极详细模式）】
-[POSITIVE]年轻女性, 长发, 白色连衣裙, 沙滩, 海浪, 日落, 金色光, 逆光, 柔光, 中景, 低角度, 景深, 8K, 高细节, 电影感, 浪漫, 平静, 海风, 水光反射, 皮肤柔和, 纱裙飘逸
-[NEGATIVE]模糊, 低质量, 噪点, 畸变, 过曝, 抖动, 堵塞阴影, 色彩断层, 水印, 文字, 多余肢体, 不自然表情, 杂乱背景, 错误解剖, 重复纹理, 颜色溢出, 缺乏细节, 扁平光
-[DESCRIPTION]这张图片是一幅优美的夕阳人像特写。一位年轻女性站在沙滩上，面朝大海，长发被海风吹起。她身穿白色连衣裙，裙摆微微飘动。夕阳位于画面右后方，产生强烈的逆光效果，在人物轮廓上形成金黄色的边缘光。光线温暖柔和，阴影拉长，整个场景笼罩在金色调中。中景低角度构图，前景有少量虚化的浪花，背景是波光粼粼的海面和淡紫色的晚霞。人物的皮肤质感细腻，带有微微的暖色高光。整体氛围浪漫、平静，像电影中的一帧画面。
+[POSITIVE] (English keywords, comma separated, number as required above)
+[NEGATIVE] (English keywords, comma separated, based on common flaws NOT present in the image. Must contain at least 8 words. Examples: blurry, low quality, noise, distortion, overexposed, shake, blocked shadows, color banding, watermark, text, extra limbs, unnatural expression, cluttered background, bad anatomy, repeating texture, color overflow, lack of detail, flat lighting)
+[DESCRIPTION] (natural language description, complete sentences, must reach the required word count)
 
-直接输出："""
+Example (extreme detail mode):
+[POSITIVE] young woman, long hair, white dress, beach, waves, sunset, golden light, backlight, soft light, medium shot, low angle, depth of field, 8K, high detail, cinematic, romantic, calm, sea breeze, water reflection, soft skin, flowing dress
+[NEGATIVE] blurry, low quality, noise, distortion, overexposed, shake, blocked shadows, color banding, watermark, text, extra limbs, unnatural expression, cluttered background, bad anatomy, repeating texture, color overflow, lack of detail, flat lighting
+[DESCRIPTION] This image is a beautiful sunset portrait close-up. A young woman stands on the beach facing the sea, long hair blown by the sea breeze. She wears a white dress with the hem slightly fluttering. The sun is located at the upper right behind her, creating a strong backlight effect and a golden rim light around her silhouette. The light is warm and soft, with long shadows, and the whole scene is bathed in golden tones. Low-angle medium shot composition, with slightly blurred waves in the foreground, and a sparkling sea and pale purple twilight in the background. The skin texture is delicate with warm highlight reflections. The overall atmosphere is romantic, calm, like a frame from a movie.
+
+Now output for the given image. Remember: [NEGATIVE] MUST contain at least 8 words. Do not skip it.
+
+Direct output:"""
 
 
 # ========== 节点类 ==========
@@ -670,6 +843,7 @@ class AIImagePromptConverter:
                 "生成模式": (["文生图", "图生图"], {"default": "文生图"}),
                 "详细程度": (["标准", "详细", "极详细"], {"default": "详细"}),
                 "输出语言": (["英文", "中文"], {"default": "英文"}),
+                "输出类型": (["词汇", "整句"], {"default": "词汇"}),
             }
         }
     RETURN_TYPES = ("STRING", "STRING")
@@ -684,6 +858,7 @@ class AIImagePromptConverter:
         mode = kwargs["生成模式"]
         detail_level = kwargs["详细程度"]
         output_lang = kwargs["输出语言"]
+        output_type = kwargs["输出类型"]
         
         try:
             config = json.loads(config_json)
@@ -698,8 +873,8 @@ class AIImagePromptConverter:
         if not addr or not token or not model:
             return ("请先配置AI连接器", "请先配置AI连接器")
         
-        req = _format_image_prompt(manual_prompt, optional_prompt, mode, detail_level, output_lang)
-        key = (manual_prompt, optional_prompt, model, mode, detail_level, output_lang)
+        req = _format_image_prompt(manual_prompt, optional_prompt, mode, output_type, detail_level, output_lang)
+        key = (manual_prompt, optional_prompt, model, mode, output_type, detail_level, output_lang)
         
         if key in _CACHE:
             cached = _CACHE[key]
